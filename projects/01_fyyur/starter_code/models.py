@@ -24,7 +24,6 @@ class Venue(db.Model):
     def __repr__(self):
         return f'<Venue {self.name}>'
 
-    # TODO: implement any missing fields, as a database migration using Flask-Migrate   
 
 class Artist(db.Model):
     __tablename__ = 'artist'
@@ -42,13 +41,8 @@ class Artist(db.Model):
     seeking_venue = db.Column(db.Boolean, default=False, nullable=True)
     seeking_description = db.Column(db.String(120))
 
-    # TODO: implement any missing fields, as a database migration using Flask-Migrate
-
-
     def __repr__(self):
         return f'<Artist {self.name}>'
-
-# TODO Implement Show and Artist models, and complete all model relationships and properties, as a database migration.
 
 class Show(db.Model):
     __tablename__ = 'show'
