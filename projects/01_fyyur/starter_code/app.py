@@ -16,21 +16,15 @@ from sqlalchemy import func, inspect
 from datetime import date
 
 
-#----------------------------------------------------------------------------#
-# App Config.
-#----------------------------------------------------------------------------#
-
 app = Flask(__name__)
 moment = Moment(app)
 app.config.from_object('config')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
-migrate = Migrate(app, db) #using flask-migrate to sync models with db
+migrate = Migrate(app, db) 
 
 from models import *
-
-# TODO: connect to a local postgresql database
-
+from utils import data_to_list
 #----------------------------------------------------------------------------#
 # Filters.
 #----------------------------------------------------------------------------#
@@ -43,39 +37,25 @@ def format_datetime(value, format='medium'):
       format="EE MM, dd, y h:mma"
   return babel.dates.format_datetime(date, format, locale='en')
 
-def object_to_dic(obj):
-
-  return {c.key: getattr(obj, c.key)
-        for c in inspect(obj).mapper.column_attrs}
-
-def convert_result_to_list(result):
-  list_dict = []
-  for i in result:
-      i_dict = i._asdict()  
-      list_dict.append(i_dict)
-  return list_dict
-
 app.jinja_env.filters['datetime'] = format_datetime
 
-#----------------------------------------------------------------------------#
-# Controllers.
-#----------------------------------------------------------------------------#
 
+# Home page return data
 @app.route('/')
 def index():
-  return render_template('pages/home.html')
+  recent_artists = Artist.query.order_by(Artist.id.desc()).all()
+  recent_venues = Venue.query.order_by(Venue.id.desc()).all()
+  return render_template('pages/home.html', recent_artists = recent_artists, recent_venues = recent_venues)
 
 
-#  Venues
-#  ----------------------------------------------------------------
-
+# Fetch all venues
 @app.route('/venues')
 def venues():
   venues_data = (db.session.query(Venue.city, Venue.state).group_by(Venue.city,Venue.state))
-  data=convert_result_to_list(venues_data)
+  data=data_to_list(venues_data)
 
   for area in data:
-    area['venues'] = [object_to_dic(ven) for ven in Venue.query.filter_by(city = area['city']).all()]
+    area['venues'] = [data_to_list(ven) for ven in Venue.query.filter_by(city = area['city']).all()]
     for ven in area['venues']:
       ven['num_shows'] = db.session.query(func.count(Show.c.Venue_id)).filter(Show.c.Venue_id == ven['id']).filter(Show.c.start_time > datetime.now()).all()[0][0]
  
@@ -85,61 +65,53 @@ def venues():
 def search_venues():
   search_term=request.form.get('search_term', '') 
 
-  # Get search count
   venue_count = db.session.query(db.func.count(Venue.id)).filter(Venue.name.contains(search_term)).all()
-
-  # fetch all record that match search
   search_result = Venue.query.filter(Venue.name.contains(search_term)).all()
 
-  response={
+  response = {
     "count": venue_count,
     "data": search_result
   }
-
   return render_template('pages/search_venues.html', results=response, search_term=search_term)
 
+# Fetch venues by id
 @app.route('/venues/<int:venue_id>')
 def show_venue(venue_id):
-  # Get a venue by id
   data = Venue.query.get(venue_id)
 
-  # Get past shows
   data.past_shows = (db.session.query(Artist.id.label("artist_id"), Artist.name.label("artist_name"), Artist.image_link.label("artist_image_link"), Show)
     .filter(Show.venue == venue_id)
     .filter(Show.artist == Artist.id)
     .filter(Show.date <= datetime.now())
     .all())
   
-  # Step 3: Get Upcomming Shows
   data.upcoming_shows = (db.session.query(Artist.id.label("artist_id"), Artist.name.label("artist_name"), Artist.image_link.label("artist_image_link"), Show)
     .filter(Show.venue == venue_id)
     .filter(Show.artist == Artist.id)
     .filter(Show.date > datetime.now())
     .all())
 
-  # Step 4: Get Number of past Shows
   data.past_shows_count = (db.session.query(db.func.count(Show.venue)).filter(Show.venue == venue_id)
     .filter(Show.date < datetime.now()).all())[0][0]
 
-  # Get number of of Upcoming Shows
   data.upcoming_shows_count = (db.session.query(
     db.func.count(Show.venue))
     .filter(Show.venue == venue_id)
     .filter(Show.date > datetime.now())
     .all())[0][0]
-    
   return render_template('pages/show_venue.html', venue=data)
 
-#  Create Venue
-#  ----------------------------------------------------------------
 
+# Render venues form
 @app.route('/venues/create', methods=['GET'])
-def create_venue_form():
+def create_venue():
   form = VenueForm()
   return render_template('forms/new_venue.html', form=form)
 
+
+# Create Venue form
 @app.route('/venues/create', methods=['POST'])
-def create_venue_submission():
+def create_venue():
   form = VenueForm(request.form)
   if form.validate():
     try:
@@ -163,12 +135,13 @@ def create_venue_submission():
 
       flash('An error occurred. while adding ' + request.form['name'] + '. Try again!')  
     finally:
-      # close session
+
       db.session.close()
   return render_template('pages/home.html')
 
+# Delete venue by id
 @app.route('/venues/<venue_id>', methods=['DELETE'])
-def delete_venue(venue_id):
+def delete(venue_id):
 
   try:
     Venue.query.filter_by(id=venue_id).delete()
@@ -178,43 +151,36 @@ def delete_venue(venue_id):
     flash('Unable to delete venue, Try again!')  
 
   finally:
-    # close database session.
     db.session.close()
     flash('Venue successfully deleted')  
   return render_template('pages/home.html')
 
-#  Artists
-#  ----------------------------------------------------------------
+
+# Fetch all artist
 @app.route('/artists')
 def artists():
-
   artists = Artist.query.all() 
   data = artists
   return render_template('pages/artists.html', artists=data)
 
+# Fetch artist by search word
 @app.route('/artists/search', methods=['POST'])
 def search_artists():
-
-  # Get search value
   search_term=request.form.get('search_term', '')
-
-  # Get search count
   artist_count = db.session.query(db.func.count(Artist.id)).filter(Artist.name.contains(search_term)).all()
   
-  # Get search result
   artist_result = Artist.query.filter(Artist.name.contains(search_term)).all()
   
   response={
     "count": artist_count[0][0],
     "data": artist_result
   }
-
   return render_template('pages/search_artists.html', results=response, search_term=search_term)
 
+
+# Fetch artist by artist_id
 @app.route('/artists/<int:artist_id>')
 def show_artist(artist_id):
-
-  # Get artist
   artist = Artist.query.get(artist_id)
 
   artist.past_shows = (db.session.query(Venue.id.label("venue_id"), Venue.name.label("venue_name"), Venue.image_link.label("venue_image_link"), Show)
@@ -238,15 +204,13 @@ def show_artist(artist_id):
     .filter(Show.artist == artist_id)
     .filter(Show.date > datetime.now())
     .all())[0][0]
-
   return render_template('pages/show_artist.html', artist=artist)
 
-#  Update
-#  ----------------------------------------------------------------
+
+# Update artist form rendering
 @app.route('/artists/<int:artist_id>/edit', methods=['GET'])
 def edit_artist(artist_id):
   form = ArtistForm()
-
   artist = Artist.query.get(artist_id)
 
   form.name.data = artist.name
@@ -258,9 +222,10 @@ def edit_artist(artist_id):
   form.website_link.data = artist.website_link
   form.seeking_talent.data = artist.seeking_talent
   form.seeking_description.data = artist.seeking_description
-
   return render_template('forms/edit_artist.html', form=form, artist=artist)
 
+
+# Update artist form
 @app.route('/artists/<int:artist_id>/edit', methods=['POST'])
 def edit_artist_submission(artist_id):
 
@@ -278,17 +243,15 @@ def edit_artist_submission(artist_id):
   db.session.add(artist)
   db.session.commit()
   db.session.close()
-
-
   return redirect(url_for('show_artist', artist_id=artist_id))
 
+
+# Update venue form rendering
 @app.route('/venues/<int:venue_id>/edit', methods=['GET'])
 def edit_venue(venue_id):
   form = VenueForm()
 
   venue = Venue.query.get(venue_id)
-
-  # Pre Fill form with data
   form.name.data = venue.name
   form.city.data = venue.city
   form.state.data = venue.state
@@ -299,9 +262,10 @@ def edit_venue(venue_id):
   form.website_link.data = venue.website_link
   form.seeking_talent.data = venue.seeking_talent
   form.seeking_description.data = venue.seeking_description
-
   return render_template('forms/edit_venue.html', form=form, venue=venue)
 
+
+# Update venue submission
 @app.route('/venues/<int:venue_id>/edit', methods=['POST'])
 def edit_venue_submission(venue_id):
 
@@ -320,17 +284,16 @@ def edit_venue_submission(venue_id):
   db.session.add(venue)
   db.session.commit()
   db.session.close()
-
   return redirect(url_for('show_venue', venue_id=venue_id))
 
-#  Create Artist
-#  ----------------------------------------------------------------
 
+# Create artist form
 @app.route('/artists/create', methods=['GET'])
 def create_artist_form():
   form = ArtistForm()
   return render_template('forms/new_artist.html', form=form)
 
+# Create artist form submission
 @app.route('/artists/create', methods=['POST'])
 def create_artist_submission():
 
@@ -365,9 +328,7 @@ def create_artist_submission():
   return render_template('pages/home.html')
 
 
-#  Shows
-#  ----------------------------------------------------------------
-
+# Fetch all shows
 @app.route('/shows')
 def shows():
 
@@ -383,12 +344,15 @@ def shows():
     .all())
   return render_template('pages/shows.html', shows=shows)
 
+
+# Create a show render form
 @app.route('/shows/create')
 def create_shows():
-  # renders form. do not touch.
   form = ShowForm()
   return render_template('forms/new_show.html', form=form)
 
+
+# Create a show submission form
 @app.route('/shows/create', methods=['POST'])
 def create_show_submission():
 
@@ -415,6 +379,7 @@ def create_show_submission():
     flash('An error occurred while adding show, Try again!.')
   return render_template('pages/home.html')
 
+
 @app.errorhandler(404)
 def not_found_error(error):
     return render_template('errors/404.html'), 404
@@ -434,9 +399,6 @@ if not app.debug:
     app.logger.addHandler(file_handler)
     app.logger.info('errors')
 
-#----------------------------------------------------------------------------#
-# Launch.
-#----------------------------------------------------------------------------#
 
 # Default port:
 if __name__ == '__main__':
